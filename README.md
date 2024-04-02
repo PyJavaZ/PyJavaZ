@@ -1,4 +1,6 @@
 [![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
+[![PyPI](https://img.shields.io/pypi/v/pyjavaz.svg)](https://pypi.org/project/pyjavaz)
+[![Maven Central](https://img.shields.io/maven-central/v/org.micro-manager.pyjavaz/PyJavaZ.svg?label=Maven%20Central)](https://search.maven.org/search?q=g:%22org.micro-manager.pyjavaz%22%20AND%20a:%22PyJavaZ%22)
 
 # PyJavaZ
 
@@ -21,7 +23,18 @@ This repository works and is actively used as part of the pycro-manager project,
 
 ## Getting Started
 
-Download the jar file containing the Java-side code, either by including it as a maven dependency or directly downloading it. Launch the `ZMQServer` class, which will automatically discover the signatures of available classes:
+Download the jar file containing the Java-side code, either by including it as a maven dependency or [directly downloading](https://s01.oss.sonatype.org/#nexus-search;quick~micro-manager) it. To include it as a maven dependency, add to your project's pom.xml:
+
+```xml
+<dependency>
+  <groupId>org.micro-manager.pyjavaz</groupId>
+  <artifactId>PyJavaZ</artifactId>
+  <version>1.0.0</version>
+</dependency>
+```
+
+
+Launch the `ZMQServer` class, which will automatically discover the signatures of available classes:
 
 ```java
 int port = 4827; // which port the server will listen on
