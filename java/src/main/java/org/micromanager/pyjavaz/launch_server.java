@@ -7,7 +7,8 @@ import java.util.HashSet;
 public class launch_server {
 
    public static void main(String[] args) {
-      new ZMQServer( 4827);
+      int port = 4827; // which port the server will listen on
+      new ZMQServer( port);
    }
 
 
