@@ -1,4 +1,4 @@
-package org.micromanager.internal.zmq;
+package org.micromanager.pyjavaz;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;

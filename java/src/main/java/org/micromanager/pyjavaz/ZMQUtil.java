@@ -3,7 +3,7 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package org.micromanager.internal.zmq;
+package org.micromanager.pyjavaz;
 
 import java.io.*;
 import java.lang.reflect.*;

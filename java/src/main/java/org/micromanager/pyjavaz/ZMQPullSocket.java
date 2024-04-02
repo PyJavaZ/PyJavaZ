@@ -3,8 +3,7 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package org.micromanager.internal.zmq;
-
+package org.micromanager.pyjavaz;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;

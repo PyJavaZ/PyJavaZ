@@ -1,4 +1,4 @@
-package org.micromanager.internal.zmq;
+package org.micromanager.pyjavaz;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -71,6 +71,29 @@ public class ZMQServer extends ZMQSocketWrapper {
    public ZMQServer(Collection<ClassLoader> cls, Function<Class, Object> classMapper,
                     String[] excludePaths, Consumer<String> debugLogger) throws URISyntaxException, UnsupportedEncodingException {
       this(cls, classMapper, excludePaths, debugLogger, ZMQSocketWrapper.STARTING_PORT_NUMBER);
+   }
+
+   /**
+    * Default minimal constructor for a new server
+    * @param port
+    */
+   public ZMQServer(int port) {
+      super(SocketType.REP, port);
+      ArrayList<ClassLoader> cls = new ArrayList<ClassLoader>();
+      cls.add(this.getClass().getClassLoader());
+      mainServer_ = this;
+      util_ = new ZMQUtil(cls, null);
+
+      //get packages for current classloader (redundant?)
+      packages_ = ZMQUtil.getPackages();
+      for (ClassLoader cl : cls) {
+         // Dont understand the launching conditions that make each neccessary, but both needed at times
+         if (cl instanceof URLClassLoader) {
+            packages_.addAll(ZMQUtil.getPackagesFromJars((URLClassLoader) cl));
+         } else  {
+            packages_.addAll(Stream.of(Package.getPackages()).map(p -> p.getName()).collect(Collectors.toList()));
+         }
+      }
    }
 
    public ZMQServer(Collection<ClassLoader> cls, Function<Class, Object> classMapper,
@@ -482,9 +505,11 @@ public class ZMQServer extends ZMQSocketWrapper {
                   throw new RuntimeException("Couldnt find class with name" + request.getString("classpath"));
                }
 
-               Object instance;
+               Object instance = null;
                if (request.getString("command").equals("constructor")) {
-                  instance = classMapper_.apply(baseClass);
+                  if (classMapper_ != null) {
+                     instance = classMapper_.apply(baseClass);
+                  }
                   //if this is not one of the classes that is supposed to grab an existing
                   //object, construct a new one
                   if (instance == null) {

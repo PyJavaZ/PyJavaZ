@@ -3,12 +3,12 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package org.micromanager.internal.zmq;
+package org.micromanager.pyjavaz;
 
 import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 import mmcorej.org.json.JSONObject;
-import static org.micromanager.internal.zmq.ZMQSocketWrapper.context_;
+import static org.micromanager.pyjavaz.ZMQSocketWrapper.context_;
 import org.zeromq.SocketType;
 
 /**
