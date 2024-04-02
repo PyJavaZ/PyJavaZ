@@ -1,7 +1,7 @@
 """
 These classes wrap the ZMQ backend for ease of access
 """
-from pycromanager.zmq_bridge.bridge import _JavaObjectShadow, _Bridge, _DataSocket
+from pyjavaz.bridge import _JavaObjectShadow, _Bridge, _DataSocket
 import zmq
 
 DEFAULT_BRIDGE_PORT = _Bridge.DEFAULT_PORT
