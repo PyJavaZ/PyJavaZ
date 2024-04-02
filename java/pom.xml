@@ -1,12 +1,12 @@
 <project>
     <modelVersion>4.0.0</modelVersion>
-    <groupId>org.micro-manager.pycro-manager</groupId>
-    <artifactId>PycroManagerJava</artifactId>
-     <version>0.44.9</version>
+    <groupId>org.micro-manager.pyjavaz</groupId>
+    <artifactId>PyJavaZ</artifactId>
+     <version>1.0.0</version>
     <packaging>jar</packaging>
-    <name>Pycro-Manager Java</name>
-    <description>The Java components of Pycro-Manager</description>
-    <url>https://github.com/micro-manager/pycro-manager</url>
+    <name>PyJavaZ</name>
+    <description>Network-capable, high-performance control of Java code from Python</description>
+    <url>https://github.com/PyJavaZ/PyJavaZ</url>
 
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
@@ -20,23 +20,18 @@
           <name>Henry Pinkard</name>
           <organization>UC Berkeley</organization>
        </developer>
-       <developer>
-          <id>nicost</id>
-          <name>Nico Stuurman</name>
-          <organization>UCSF/HHMI</organization>
-       </developer>
     </developers>
   
     <scm>
-      <url>https://github.com/micro-manager/pycro-manager</url>
-      <connection>scm:git:git://github.com/micro-manager/pycro-manager.git</connection>
-      <developerConnection>scm:git:git@github.com:micro-manager/pycro-manager.git</developerConnection>
+      <url>https://github.com/PyJavaZ/PyJavaZ</url>
+      <connection>scm:git:git://github.com/PyJavaZ/PyJavaZ.git</connection>
+      <developerConnection>scm:git:git@github.com:PyJavaZ/PyJavaZ.git</developerConnection>
    </scm>
 
   <licenses>
       <license>
          <name>BSD-3</name>
-         <url>https://github.com/micro-manager/pycro-manager/blob/master/LICENSE</url>
+         <url>https://github.com/PyJavaZ/PyJavaZ/blob/master/LICENSE</url>
        </license>
    </licenses>
 
@@ -51,19 +46,6 @@
          <artifactId>MMCoreJ</artifactId>
          <version>10.1.1.0</version>
       </dependency>
-      <dependency>
-         <groupId>org.micro-manager.acqengj</groupId>
-         <artifactId>AcqEngJ</artifactId>
-     <version>0.34.2</version>
-      </dependency>
-      <dependency>
-         <groupId>org.micro-manager.ndviewer</groupId>
-         <artifactId>NDViewer</artifactId>
-     <version>0.10.2</version>
-      </dependency>
-      <dependency>
-         <groupId>org.micro-manager.ndtiffstorage</groupId>
-         <artifactId>NDTiffStorage</artifactId>
      <version>2.16.0</version>
       </dependency>
   </dependencies>
