@@ -6,7 +6,7 @@ PyJavaZ is a high-performance bridge that allows Java code to be called in Pytho
 
 ## Background
 
-PyJavaZ was originally developed as part of the Pycro-Manager project, a Python interface to the Java-based Micro-Manager software for microscope control. It was developed because of the need for a unique set of requirements compared to existing Java-Python interoperability libraries like Jython, Py4J, and JPype. Specifically, operating the Java Virtual Machine and python interpreter in independent processes, while maintaining high enough data transfer performance to be able to handle large amounts of data passing between processes.
+PyJavaZ was originally developed as part of the [Pycro-Manager](https://github.com/micro-manager/pycro-manager) project, a Python interface to the Java-based Micro-Manager software for microscope control. It was developed because of the need for a unique set of requirements compared to existing Java-Python interoperability libraries like Jython, Py4J, and JPype. Specifically, operating the Java Virtual Machine and python interpreter in independent processes, while maintaining high enough data transfer performance to be able to handle large amounts of data passing between processes.
 
 ## Key Features
 
