@@ -1,19 +1,22 @@
+import atexit
+import copy
+import inspect
 import json
+import logging
 import re
+import sys
+import threading
 import time
+import traceback
 import typing
 import warnings
-import inspect
+import weakref
+from threading import Lock
+
 import numpy as np
 import zmq
-import copy
-import sys
-from threading import Lock
-import threading
-import weakref
-import atexit
-import traceback
-import pycromanager.logging as logging
+
+logger = logging.getLogger(__name__)
 
 
 class _DataSocket:
@@ -37,11 +40,11 @@ class _DataSocket:
         self._closed = False
         if type == zmq.PUSH:
             if debug:
-                logging.main_logger.debug("binding {}".format(port))
+                logger.debug("binding {}".format(port))
             self._socket.bind("tcp://{}:{}".format(ip_address, port))
         else:
             if debug:
-                logging.main_logger.debug("connecting {}".format(port))
+                logger.debug("connecting {}".format(port))
             self._socket.connect("tcp://{}:{}".format(ip_address, port))
 
     def _register_java_object(self, object):
@@ -72,7 +75,7 @@ class _DataSocket:
         """
         # make up a random 32 bit int as the identifier
         # TODO: change to simple counting
-        identifier = np.random.randint(-(2 ** 31), 2 ** 31 - 1, 1, dtype=np.int32)[0]
+        identifier = np.random.randint(-(2**31), 2**31 - 1, 1, dtype=np.int32)[0]
         # '@{some_number}_{bytes_per_pixel}'
         # if its a numpy array, include bytes per pixel, otherwise just interpret it as raw byts
         # TODO : I thinkg its always raw binary and the argument deserialization types handles conversion to java arrays
@@ -111,14 +114,18 @@ class _DataSocket:
         self._remove_bytes(bytes_data, message)
         message_string = json.dumps(message)
         if self._debug and not suppress_debug_message:
-            logging.main_logger.debug("sending: {}".format(message))
+            logger.debug("sending: {}".format(message))
         # convert keys to byte array
         key_vals = [(identifier.tobytes(), value) for identifier, value in bytes_data]
         message_parts = [bytes(message_string, "iso-8859-1")] + [
             item for keyval in key_vals for item in keyval
         ]
         if self._socket is None:
-            raise Exception("Tried to send message through socket {}, which is already closed".format(self._port))
+            raise Exception(
+                "Tried to send message through socket {}, which is already closed".format(
+                    self._port
+                )
+            )
         if timeout == 0 or timeout is None:
             self._socket.send_multipart(message_parts)
         else:
@@ -144,12 +151,16 @@ class _DataSocket:
                     if hash == hash_in_message:
                         dict_or_list[key] = value
                         return
-                elif isinstance(dict_or_list[key], list) or isinstance(dict_or_list[key], dict):
+                elif isinstance(dict_or_list[key], list) or isinstance(
+                    dict_or_list[key], dict
+                ):
                     self._replace_bytes(dict_or_list[key], hash, value)
         elif isinstance(dict_or_list, list):
             for i, entry in enumerate(dict_or_list):
                 if isinstance(entry, str) and "@" in dict_or_list[entry]:
-                    hash_in_message = int(entry.split("@")[1], 16)  # interpret hex hash string
+                    hash_in_message = int(
+                        entry.split("@")[1], 16
+                    )  # interpret hex hash string
                     if hash == hash_in_message:
                         dict_or_list[i] = value
                         return
@@ -180,7 +191,7 @@ class _DataSocket:
             self._replace_bytes(message, identity_hash, value)
 
         if self._debug and not suppress_debug_message:
-            logging.main_logger.debug("received: {}".format(message))
+            logger.debug("received: {}".format(message))
         self._check_exception(message)
         return message
 
@@ -189,22 +200,23 @@ class _DataSocket:
             raise Exception(response["value"])
 
     def __del__(self):
-        self.close() # make sure it closes properly
+        self.close()  # make sure it closes properly
 
     def close(self):
         with self._close_lock:
             if not self._closed:
                 for java_object in self._java_objects:
                     java_object._close()
-                    del java_object # potentially redundant, trying to fix closing race condition
+                    del java_object  # potentially redundant, trying to fix closing race condition
                 self._java_objects = None
                 self._socket.close()
                 while not self._socket.closed:
                     time.sleep(0.01)
                 self._socket = None
                 if self._debug:
-                    logging.main_logger.debug('closed socket {}'.format(self._port))
+                    logger.debug("closed socket {}".format(self._port))
                 self._closed = True
+
 
 def server_terminated(port):
     """
@@ -214,6 +226,7 @@ def server_terminated(port):
     around for a response from the server.
     """
     _Bridge._ports_with_terminated_servers.add(port)
+
 
 class _Bridge:
     """
@@ -230,10 +243,15 @@ class _Bridge:
     _cached_bridges_by_port_and_thread = {}
     _ports_with_terminated_servers = set()
 
-
     @staticmethod
-    def create_or_get_existing_bridge(port: int=DEFAULT_PORT, convert_camel_case: bool=True,
-                                      debug: bool=False, ip_address: str="127.0.0.1", timeout: int=DEFAULT_TIMEOUT, iterate: bool = False):
+    def create_or_get_existing_bridge(
+        port: int = DEFAULT_PORT,
+        convert_camel_case: bool = True,
+        debug: bool = False,
+        ip_address: str = "127.0.0.1",
+        timeout: int = DEFAULT_TIMEOUT,
+        iterate: bool = False,
+    ):
         """
         Get a bridge for a given port and thread. If a bridge for that port/thread combo already exists,
         return it
@@ -246,25 +264,44 @@ class _Bridge:
             if port_thread_id in _Bridge._cached_bridges_by_port_and_thread.keys():
                 bridge = _Bridge._cached_bridges_by_port_and_thread[port_thread_id]()
                 if bridge is None:
-                    raise Exception("Bridge for port {} and thread {} has been "
-                                    "closed but not removed".format(port, threading.current_thread().name))
+                    raise Exception(
+                        "Bridge for port {} and thread {} has been "
+                        "closed but not removed".format(
+                            port, threading.current_thread().name
+                        )
+                    )
                 if debug:
-                    logging.main_logger.debug("returning cached bridge for port {} thread {}".format(
-                        port, threading.current_thread().name))
+                    logger.debug(
+                        "returning cached bridge for port {} thread {}".format(
+                            port, threading.current_thread().name
+                        )
+                    )
                 return bridge
             else:
                 if debug:
-                    logging.main_logger.debug("creating new bridge for port {} thread {}".format(
-                        port, threading.current_thread().name))
-                b = _Bridge(port, convert_camel_case, debug, ip_address, timeout, iterate)
+                    logger.debug(
+                        "creating new bridge for port {} thread {}".format(
+                            port, threading.current_thread().name
+                        )
+                    )
+                b = _Bridge(
+                    port, convert_camel_case, debug, ip_address, timeout, iterate
+                )
                 # store weak refs so that the existence of thread/port bridge caching doesn't prevent
                 # the garbage collection of unused bridge objects
-                _Bridge._cached_bridges_by_port_and_thread[port_thread_id] = weakref.ref(b)
+                _Bridge._cached_bridges_by_port_and_thread[
+                    port_thread_id
+                ] = weakref.ref(b)
                 return b
 
     def __init__(
-        self, port: int=DEFAULT_PORT, convert_camel_case: bool=True,
-            debug: bool=False, ip_address: str="127.0.0.1", timeout: int=DEFAULT_TIMEOUT, iterate: bool = False
+        self,
+        port: int = DEFAULT_PORT,
+        convert_camel_case: bool = True,
+        debug: bool = False,
+        ip_address: str = "127.0.0.1",
+        timeout: int = DEFAULT_TIMEOUT,
+        iterate: bool = False,
     ):
         """
         This constructor should not be called directly. Instead, use the static method create_or_get_existing_bridge
@@ -291,15 +328,17 @@ class _Bridge:
         self._timeout = timeout
         self._iterate = iterate
         self._main_socket = _DataSocket(
-            zmq.Context.instance(), port, zmq.REQ, debug=debug, ip_address=self._ip_address
+            zmq.Context.instance(),
+            port,
+            zmq.REQ,
+            debug=debug,
+            ip_address=self._ip_address,
         )
         self._main_socket.send({"command": "connect", "debug": debug})
         self._class_factory = _JavaClassFactory()
         reply_json = self._main_socket.receive(timeout=timeout)
         if reply_json is None:
-             raise Exception(
-                f"Socket timed out after {timeout} milliseconds"
-            )
+            raise Exception(f"Socket timed out after {timeout} milliseconds")
         if reply_json["type"] == "exception":
             raise Exception(reply_json["message"])
         if "version" not in reply_json:
@@ -313,7 +352,6 @@ class _Bridge:
                 )
             )
 
-
     def __del__(self):
         with _Bridge._bridge_creation_lock:
             # Have to cache the port thread id in the bridge instance and then
@@ -322,11 +360,14 @@ class _Bridge:
             # than the one that created the bridge
             del _Bridge._cached_bridges_by_port_and_thread[self._port_thread_id]
             if self._debug:
-                logging.main_logger.debug("BRIDGE DESCTRUCTOR for {} on port {} thread {}".format(
-                    str(self), self.port, threading.current_thread().name))
-                logging.main_logger.debug("Running on thread {}".format(threading.current_thread().name))
-
-
+                logger.debug(
+                    "BRIDGE DESCTRUCTOR for {} on port {} thread {}".format(
+                        str(self), self.port, threading.current_thread().name
+                    )
+                )
+                logger.debug(
+                    "Running on thread {}".format(threading.current_thread().name)
+                )
 
     def _send(self, message, timeout=None):
         """
@@ -340,7 +381,9 @@ class _Bridge:
         """
         return self._main_socket.receive(timeout=timeout)
 
-    def _deserialize_object(self, serialized_object) -> typing.Type["_JavaObjectShadow"]:
+    def _deserialize_object(
+        self, serialized_object
+    ) -> typing.Type["_JavaObjectShadow"]:
         """
         Deserialize the serialized description of a Java object and return a constructor for the shadow
         """
@@ -348,8 +391,13 @@ class _Bridge:
             serialized_object, convert_camel_case=self._convert_camel_case
         )
 
-    def _construct_java_object(self, classpath: str, new_socket: bool=False, args: list=None,
-                               debug: bool=False):
+    def _construct_java_object(
+        self,
+        classpath: str,
+        new_socket: bool = False,
+        args: list = None,
+        debug: bool = False,
+    ):
         """
         Create a new instance of a an object on the Java side. Returns a Python "Shadow" of the object, which behaves
         just like the object on the Java side (i.e. same methods, fields). Methods of the object can be inferred at
@@ -381,8 +429,12 @@ class _Bridge:
 
         methods_with_name = [m for m in constructors if m["name"] == classpath]
         if len(methods_with_name) == 0:
-            raise Exception("No valid java constructor found with classpath {}".format(classpath))
-        valid_method_spec, deserialize_types = _check_method_args(methods_with_name, args)
+            raise Exception(
+                "No valid java constructor found with classpath {}".format(classpath)
+            )
+        valid_method_spec, deserialize_types = _check_method_args(
+            methods_with_name, args
+        )
 
         # Calling a constructor, rather than getting return from method
         message = {
@@ -399,16 +451,24 @@ class _Bridge:
         if new_socket:
             # create a new bridge over a different port
             bridge = _Bridge.create_or_get_existing_bridge(
-                port=serialized_object["port"], ip_address=self._ip_address, timeout=self._timeout, debug=debug)
+                port=serialized_object["port"],
+                ip_address=self._ip_address,
+                timeout=self._timeout,
+                debug=debug,
+            )
             # bridge = _Bridge(port=serialized_object["port"], ip_address=self._ip_address,
             #                  timeout=self._timeout, debug=debug)
         else:
             bridge = self
 
         java_shadow_constructor = self._deserialize_object(serialized_object)
-        return java_shadow_constructor(serialized_object=serialized_object, bridge=bridge)
+        return java_shadow_constructor(
+            serialized_object=serialized_object, bridge=bridge
+        )
 
-    def _get_java_class(self, classpath: str, new_socket: bool=False, debug: bool=False):
+    def _get_java_class(
+        self, classpath: str, new_socket: bool = False, debug: bool = False
+    ):
         """
         Get an an object corresponding to a java class, for example to be used
         when calling static methods on the class directly
@@ -435,8 +495,12 @@ class _Bridge:
 
         if new_socket:
             # create a new bridge over a different port
-            bridge = _Bridge.create_or_get_existing_bridge(port=serialized_object["port"], ip_address=self._ip_address,
-                                                           timeout=self._timeout, debug=debug)
+            bridge = _Bridge.create_or_get_existing_bridge(
+                port=serialized_object["port"],
+                ip_address=self._ip_address,
+                timeout=self._timeout,
+                debug=debug,
+            )
         else:
             bridge = self
         return self._class_factory.create(
@@ -471,7 +535,9 @@ class _JavaClassFactory:
             for field in serialized_obj["fields"]:
                 fields[field] = property(
                     fget=lambda instance, Field=field: instance._access_field(Field),
-                    fset=lambda instance, val, Field=field: instance._set_field(Field, val),
+                    fset=lambda instance, val, Field=field: instance._set_field(
+                        Field, val
+                    ),
                 )
 
             methods = {}  # Create a dict of methods for the class by name.
@@ -485,7 +551,9 @@ class _JavaClassFactory:
                 return_type = methods_with_name[0]["return-type"]
                 fn = lambda instance, *args, signatures_list=tuple(
                     methods_with_name
-                ): instance._translate_call(signatures_list, args, static=_java_class == 'java.lang.Class')
+                ): instance._translate_call(
+                    signatures_list, args, static=_java_class == "java.lang.Class"
+                )
                 fn.__name__ = method_name_modified
                 fn.__doc__ = "{}.{}: A dynamically generated Java method.".format(
                     _java_class, method_name_modified
@@ -499,7 +567,9 @@ class _JavaClassFactory:
                     if return_type in _JAVA_TYPE_NAME_TO_PYTHON_TYPE
                     else return_type
                 )
-                fn.__signature__ = sig.replace(parameters=params, return_annotation=return_type)
+                fn.__signature__ = sig.replace(
+                    parameters=params, return_annotation=return_type
+                )
                 methods[method_name_modified] = fn
 
             newclass = type(  # Dynamically create a class to shadow a java class.
@@ -518,6 +588,7 @@ class _JavaClassFactory:
             self.classes[_java_class] = newclass
             return newclass
 
+
 class _JavaObjectShadow:
     """
     Generic class for serving as a python interface for a java class using a zmq server backend
@@ -527,9 +598,7 @@ class _JavaObjectShadow:
     depending which thread the object is used from
     """
 
-    _interfaces = (
-        None  # Subclasses should fill these out. This class should never be directly instantiated.
-    )
+    _interfaces = None  # Subclasses should fill these out. This class should never be directly instantiated.
     _java_class = None
 
     def __init__(self, serialized_object, bridge: _Bridge):
@@ -554,10 +623,12 @@ class _JavaObjectShadow:
         # # this makes sure cleanup occurs properly
         # # Need to use a wr to ensure that reference to close doesnt cause memeory leak
         wr = weakref.ref(self)
+
         def cleanup():
             if wr() is not None:
                 # It hasn't already been garbage collected
                 wr()._close()
+
         atexit.register(cleanup)
         self._close_lock = Lock()
 
@@ -570,14 +641,14 @@ class _JavaObjectShadow:
             message = {
                 "command": "destructor",
                 "hash-code": self._hash_code,
-                "java_class_name": self._java_class # for debugging
-                }
+                "java_class_name": self._java_class,  # for debugging
+            }
             self._send(message)
             reply_json = None
             while reply_json is None:
                 reply_json = self._get_bridge()._receive(timeout=self._timeout)
                 if self._creation_port in _Bridge._ports_with_terminated_servers:
-                    break # the server has been terminated, so we can't expect a reply
+                    break  # the server has been terminated, so we can't expect a reply
             if reply_json is not None and reply_json["type"] == "exception":
                 raise Exception(reply_json["value"])
             self._closed = True
@@ -617,13 +688,13 @@ class _JavaObjectShadow:
             bridge_to_use = self._creation_bridge
         else:
             bridge_to_use = _Bridge.create_or_get_existing_bridge(
-                    port=port,
-                    convert_camel_case=self._convert_camel_case,
-                    ip_address=self._ip_address,
-                    timeout=self._timeout,
-                    debug=self._debug,
-                    iterate=self._iterate
-                    )
+                port=port,
+                convert_camel_case=self._convert_camel_case,
+                ip_address=self._ip_address,
+                timeout=self._timeout,
+                debug=self._debug,
+                iterate=self._iterate,
+            )
         if bridge_to_use is None:
             raise Exception("{} Failed to create bridge on port {}".format(self, port))
         # Get current thread id
@@ -631,15 +702,19 @@ class _JavaObjectShadow:
         # Want to hold references to all bridges (specific to each thread port combo)
         # so that they don't get garbage collected
         combo_id = (thread_id, port)
-        if combo_id in self._bridges_by_port_thread.keys() and \
-            bridge_to_use is not self._bridges_by_port_thread[combo_id]:
+        if (
+            combo_id in self._bridges_by_port_thread.keys()
+            and bridge_to_use is not self._bridges_by_port_thread[combo_id]
+        ):
             # print('bridge just created', bridge_to_use,
             #       'cached', self._bridges_by_port_thread[combo_id])
             if self._debug:
-                logging.main_logger.debug(self)
+                logger.debug(self)
                 # print current call stack
                 traceback.print_stack()
-            warnings.warn("Duplicate bridges on port {} thread {}".format(port, thread_id))
+            warnings.warn(
+                "Duplicate bridges on port {} thread {}".format(port, thread_id)
+            )
         self._bridges_by_port_thread[combo_id] = bridge_to_use
 
         return bridge_to_use
@@ -649,15 +724,21 @@ class _JavaObjectShadow:
         Tell java side this object is garbage collected so it can do the same if needed
         """
         if self._debug:
-            logging.main_logger.debug('destructor for {} on thread {}'.format(
-                str(self), threading.current_thread().name))
-            logging.main_logger.debug('Thread name: {}'.format(threading.current_thread().name))
+            logger.debug(
+                "destructor for {} on thread {}".format(
+                    str(self), threading.current_thread().name
+                )
+            )
+            logger.debug("Thread name: {}".format(threading.current_thread().name))
         try:
             self._close()
         except Exception as e:
             traceback.print_exc()
-            logging.main_logger.error('Exception in destructor for {} on thread {}'.format(
-                str(self), threading.current_thread().name))
+            logger.error(
+                "Exception in destructor for {} on thread {}".format(
+                    str(self), threading.current_thread().name
+                )
+            )
 
     def _access_field(self, name):
         """
@@ -701,7 +782,7 @@ class _JavaObjectShadow:
             "command": "run-method",
             "static": static,
             "hash-code": self._hash_code,
-            "java_class_name": self._java_class, # for debugging
+            "java_class_name": self._java_class,  # for debugging
             "name": valid_method_spec["name"],
             "argument-types": valid_method_spec["arguments"],
             "argument-deserialization-types": deserialize_types,
@@ -735,21 +816,24 @@ class _JavaObjectShadow:
             else:
                 raise Exception("Unrecognized return class")
         elif json_return["type"] == "unserialized-object":
-
             # inherit socket from parent object
-            java_shadow_constructor = self._get_bridge()._deserialize_object(json_return)
-            obj = java_shadow_constructor(serialized_object=json_return, bridge=self._get_bridge())
+            java_shadow_constructor = self._get_bridge()._deserialize_object(
+                json_return
+            )
+            obj = java_shadow_constructor(
+                serialized_object=json_return, bridge=self._get_bridge()
+            )
 
             # if object is iterable, go through the elements
-            if self._get_bridge()._iterate and hasattr(obj, 'iterator'):
+            if self._get_bridge()._iterate and hasattr(obj, "iterator"):
                 it = obj.iterator()
                 elts = []
-                has_next = it.hasNext if hasattr(it, 'hasNext') else it.has_next
-                while(has_next()):
+                has_next = it.hasNext if hasattr(it, "hasNext") else it.has_next
+                while has_next():
                     elts.append(it.next())
                 return elts
-            else: 
-                return obj 
+            else:
+                return obj
         else:
             return deserialize_array(json_return)
 
@@ -795,7 +879,9 @@ def _package_arguments(valid_method_spec, fn_args):
         elif isinstance(arg_val, np.ndarray):
             arguments.append(_serialize_arg(arg_val))
         else:
-            arguments.append(_serialize_arg(_JAVA_TYPE_NAME_TO_PYTHON_TYPE[arg_type](arg_val)))
+            arguments.append(
+                _serialize_arg(_JAVA_TYPE_NAME_TO_PYTHON_TYPE[arg_type](arg_val))
+            )
     return arguments
 
 
@@ -835,13 +921,18 @@ def _check_single_method_spec(method_spec, fn_args):
                 and arg_val.dtype.type != _JAVA_ARRAY_TYPE_NUMPY_DTYPE[arg_java_type]
             ):
                 return False
-        elif arg_java_type not in _JAVA_TYPE_NAME_TO_CASTABLE_PYTHON_TYPE or not any(
-            [
-                isinstance(arg_val, acceptable_type)
-                for acceptable_type in _JAVA_TYPE_NAME_TO_CASTABLE_PYTHON_TYPE[arg_java_type]
-            ]
-        ) and not (
-            arg_val is None and arg_java_type in _JAVA_NON_PRIMITIVES):  # could be null if its an object
+        elif (
+            arg_java_type not in _JAVA_TYPE_NAME_TO_CASTABLE_PYTHON_TYPE
+            or not any(
+                [
+                    isinstance(arg_val, acceptable_type)
+                    for acceptable_type in _JAVA_TYPE_NAME_TO_CASTABLE_PYTHON_TYPE[
+                        arg_java_type
+                    ]
+                ]
+            )
+            and not (arg_val is None and arg_java_type in _JAVA_NON_PRIMITIVES)
+        ):  # could be null if its an object
             # if a type that gets converted
             return False
     return True
@@ -869,7 +960,12 @@ def _check_method_args(method_specs, fn_args):
     if valid_method_spec is None:
         raise Exception(
             "Incorrect arguments. \nExpected {} \nGot {}".format(
-                " or ".join([", ".join(method_spec["arguments"]) for method_spec in method_specs]),
+                " or ".join(
+                    [
+                        ", ".join(method_spec["arguments"])
+                        for method_spec in method_specs
+                    ]
+                ),
                 ", ".join([str(type(a)) for a in fn_args]),
             )
         )
@@ -883,7 +979,8 @@ def _check_method_args(method_specs, fn_args):
                 [
                     ja
                     for ja, npdt in zip(
-                        _JAVA_ARRAY_TYPE_NUMPY_DTYPE.keys(), _JAVA_ARRAY_TYPE_NUMPY_DTYPE.values()
+                        _JAVA_ARRAY_TYPE_NUMPY_DTYPE.keys(),
+                        _JAVA_ARRAY_TYPE_NUMPY_DTYPE.values(),
                     )
                     if python_arg_val.dtype.type == npdt
                 ][0]
@@ -907,15 +1004,21 @@ def _parse_arg_names(methods, method_name, convert_camel_case):
     )
     # sort with largest number of args last so lambda at end gets max num args
     methods_with_name.sort(key=lambda val: len(val["arguments"]))
-    method = methods_with_name[-1]  # We only need to evaluate the overload with the most arguments.
+    method = methods_with_name[
+        -1
+    ]  # We only need to evaluate the overload with the most arguments.
     params = []
     unique_argument_names = []
     for arg_index, typ in enumerate(method["arguments"]):
         hint = _CLASS_NAME_MAPPING[typ] if typ in _CLASS_NAME_MAPPING else "object"
         python_type = (
-            _JAVA_TYPE_NAME_TO_PYTHON_TYPE[typ] if typ in _JAVA_TYPE_NAME_TO_PYTHON_TYPE else typ
+            _JAVA_TYPE_NAME_TO_PYTHON_TYPE[typ]
+            if typ in _JAVA_TYPE_NAME_TO_PYTHON_TYPE
+            else typ
         )
-        if hint in unique_argument_names:  # append numbers to end so arg hints have unique names
+        if (
+            hint in unique_argument_names
+        ):  # append numbers to end so arg hints have unique names
             i = 1
             while hint + str(i) in unique_argument_names:
                 i += 1
@@ -944,6 +1047,7 @@ def _camel_case_2_snake_case(name):
     s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
     return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
+
 # Used for generating type hints in arguments
 _CLASS_NAME_MAPPING = {
     "byte[]": "uint8array",
@@ -962,7 +1066,7 @@ _CLASS_NAME_MAPPING = {
     "short": "int",
     "void": "void",
 }
-#Used for deserializing java arrarys into numpy arrays
+# Used for deserializing java arrarys into numpy arrays
 _JAVA_ARRAY_TYPE_NUMPY_DTYPE = {
     "boolean[]": np.bool_,
     "byte[]": np.uint8,
@@ -973,7 +1077,7 @@ _JAVA_ARRAY_TYPE_NUMPY_DTYPE = {
     "int[]": np.int32,
     "long[]": np.int64,
 }
-#used for figuring our which java methods to call and if python args match
+# used for figuring our which java methods to call and if python args match
 _JAVA_TYPE_NAME_TO_PYTHON_TYPE = {
     "boolean": bool,
     "java.lang.Boolean": bool,
@@ -1028,8 +1132,17 @@ _JAVA_TYPE_NAME_TO_CASTABLE_PYTHON_TYPE = {
     "void": {None},
     "java.lang.Object": {object},
 }
-_JAVA_NON_PRIMITIVES = {"byte[]", "double[]", "int[]", "short[]", "char[]", "long[]", "boolean[]",
-                        "java.lang.String", "java.lang.Object"}
+_JAVA_NON_PRIMITIVES = {
+    "byte[]",
+    "double[]",
+    "int[]",
+    "short[]",
+    "char[]",
+    "long[]",
+    "boolean[]",
+    "java.lang.String",
+    "java.lang.Object",
+}
 
 if __name__ == "__main__":
     # Test basic bridge operations
