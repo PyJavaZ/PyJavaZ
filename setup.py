@@ -1,9 +1,8 @@
 import setuptools
 from os import path
 
-# with open("README.md", "r") as fh:
-#     long_description = fh.read()
-long_description = ''
+with open("README.md", "r") as fh:
+    long_description = fh.read()
 
 # extract version
 path = path.realpath("pyjavaz/_version.py")
