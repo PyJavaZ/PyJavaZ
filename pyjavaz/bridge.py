@@ -33,8 +33,6 @@ class _DataSocket:
         # Set the send timeout to -1, making it block indefinitely
         self._socket.setsockopt(zmq.SNDTIMEO, -1)
         self._debug = debug
-        # store these as wekrefs so that circular refs dont prevent garbage collection
-        self._java_objects = weakref.WeakSet()
         self._port = port
         self._close_lock = Lock()
         self._closed = False
@@ -46,9 +44,6 @@ class _DataSocket:
             if debug:
                 logger.debug("connecting {}".format(port))
             self._socket.connect("tcp://{}:{}".format(ip_address, port))
-
-    def _register_java_object(self, object):
-        self._java_objects.add(object)
 
     def _convert_np_to_python(self, d):
         """
@@ -205,10 +200,6 @@ class _DataSocket:
     def close(self):
         with self._close_lock:
             if not self._closed:
-                for java_object in self._java_objects:
-                    java_object._close()
-                    del java_object  # potentially redundant, trying to fix closing race condition
-                self._java_objects = None
                 self._socket.close()
                 while not self._socket.closed:
                     time.sleep(0.01)
@@ -266,33 +257,16 @@ class _Bridge:
                 if bridge is None:
                     raise Exception(
                         "Bridge for port {} and thread {} has been "
-                        "closed but not removed".format(
-                            port, threading.current_thread().name
-                        )
-                    )
+                        "closed but not removed".format(port, threading.current_thread().name))
                 if debug:
                     logger.debug(
-                        "returning cached bridge for port {} thread {}".format(
-                            port, threading.current_thread().name
-                        )
-                    )
+                        "returning cached bridge for port {} thread {}".format(port, threading.current_thread().name))
                 return bridge
             else:
                 if debug:
                     logger.debug(
-                        "creating new bridge for port {} thread {}".format(
-                            port, threading.current_thread().name
-                        )
-                    )
-                b = _Bridge(
-                    port, convert_camel_case, debug, ip_address, timeout, iterate
-                )
-                # store weak refs so that the existence of thread/port bridge caching doesn't prevent
-                # the garbage collection of unused bridge objects
-                _Bridge._cached_bridges_by_port_and_thread[
-                    port_thread_id
-                ] = weakref.ref(b)
-                return b
+                        "creating new bridge for port {} thread {}".format(port, threading.current_thread().name))
+                return _Bridge(port, convert_camel_case, debug, ip_address, timeout, iterate)
 
     def __init__(
         self,
@@ -318,6 +292,7 @@ class _Bridge:
         iterate : bool
             If True, ListArray will be iterated and give lists
         """
+        self._cached = False
         thread_id = threading.current_thread().ident
         port_thread_id = (port, thread_id)
         self._port_thread_id = port_thread_id
@@ -327,6 +302,9 @@ class _Bridge:
         self._debug = debug
         self._timeout = timeout
         self._iterate = iterate
+
+        
+
         self._main_socket = _DataSocket(
             zmq.Context.instance(),
             port,
@@ -351,6 +329,10 @@ class _Bridge:
                     reply_json["version"], self._EXPECTED_ZMQ_SERVER_VERSION
                 )
             )
+        # store weak refs so that the existence of thread/port bridge caching doesn't prevent
+        # the garbage collection of unused bridge objects
+        _Bridge._cached_bridges_by_port_and_thread[port_thread_id] = weakref.ref(self)
+        self._cached = True
 
     def __del__(self):
         with _Bridge._bridge_creation_lock:
@@ -358,16 +340,17 @@ class _Bridge:
             # use it to figure out which one to delete rather than checking the current thread
             # because for some reason at exit time this method can get called by a different thread
             # than the one that created the bridge
-            del _Bridge._cached_bridges_by_port_and_thread[self._port_thread_id]
-            if self._debug:
-                logger.debug(
-                    "BRIDGE DESCTRUCTOR for {} on port {} thread {}".format(
-                        str(self), self.port, threading.current_thread().name
+            if self._cached: # Don't run this if there was an exception in the constructor
+                del _Bridge._cached_bridges_by_port_and_thread[self._port_thread_id]
+                if self._debug:
+                    logger.debug(
+                        "BRIDGE DESCTRUCTOR for {} on port {} thread {}".format(
+                            str(self), self.port, threading.current_thread().name
+                        )
                     )
-                )
-                logger.debug(
-                    "Running on thread {}".format(threading.current_thread().name)
-                )
+                    logger.debug(
+                        "Running on thread {}".format(threading.current_thread().name)
+                    )
 
     def _send(self, message, timeout=None):
         """
@@ -595,7 +578,9 @@ class _JavaObjectShadow:
 
     Every instance of this class is assciated with one particular port on which the corresponding
     Java server that is keeping track of it exists. But it can be used with multiple Bridge objects,
-    depending which thread the object is used from
+    depending which thread the object is used from. The creation bridge is the one on which the objects
+    deestructor should ultimately run
+
     """
 
     _interfaces = None  # Subclasses should fill these out. This class should never be directly instantiated.
@@ -646,7 +631,8 @@ class _JavaObjectShadow:
             self._send(message)
             reply_json = None
             while reply_json is None:
-                reply_json = self._get_bridge()._receive(timeout=self._timeout)
+                bridge = self._get_bridge()
+                reply_json = bridge._receive(timeout=self._timeout)
                 if self._creation_port in _Bridge._ports_with_terminated_servers:
                     break  # the server has been terminated, so we can't expect a reply
             if reply_json is not None and reply_json["type"] == "exception":
@@ -672,8 +658,8 @@ class _JavaObjectShadow:
     def _get_bridge(self):
         """
         Because ZMQ sockets are not thread safe, every thread must have its own. Bridges are also
-        also associated with a single port. The JavaObjectShadow instance should hold references to
-        all bridges it has used, so that dont get garbage collected for the duration of the object's
+        associated with a single port. The JavaObjectShadow instance should hold references to
+        all bridges it has used, so that they dont get garbage collected for the duration of the object's
         existence. Otherwise, bridges might keep getting created and then destroyed.
         """
         # This should grab an existing bridge if it exists for this thread/port combo
