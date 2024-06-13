@@ -67,7 +67,7 @@ public abstract class ZMQSocketWrapper {
             return;
          }
          socket_.close();
-         portSocketMap_.remove(this.getPort());
+         Object o = portSocketMap_.remove(this.getPort());
          closed_ = true;
       }
    }
