@@ -1,11 +1,11 @@
 """
 These classes wrap the ZMQ backend for ease of access
 """
-from pyjavaz.bridge import _JavaObjectShadow, _Bridge, _DataSocket
+from pyjavaz.bridge import _JavaObjectShadow, Bridge, _DataSocket
 import zmq
 
-DEFAULT_BRIDGE_PORT = _Bridge.DEFAULT_PORT
-DEFAULT_BRIDGE_TIMEOUT = _Bridge.DEFAULT_TIMEOUT
+DEFAULT_BRIDGE_PORT = Bridge.DEFAULT_PORT
+DEFAULT_BRIDGE_TIMEOUT = Bridge.DEFAULT_TIMEOUT
 
 class PullSocket(_DataSocket):
     """
@@ -13,7 +13,7 @@ class PullSocket(_DataSocket):
     """
     def __init__(
             self,
-            port=_Bridge.DEFAULT_PORT,
+            port=Bridge.DEFAULT_PORT,
             debug=False,
             ip_address="127.0.0.1"
     ):
@@ -27,7 +27,7 @@ class PushSocket(_DataSocket):
     """
     def __init__(
             self,
-            port=_Bridge.DEFAULT_PORT,
+            port=Bridge.DEFAULT_PORT,
             debug=False,
             ip_address="127.0.0.1"
     ):
@@ -47,8 +47,8 @@ class JavaObject(_JavaObjectShadow):
         cls,
         classpath,
         args: list = None,
-        port=_Bridge.DEFAULT_PORT,
-        timeout=_Bridge.DEFAULT_TIMEOUT,
+        port=Bridge.DEFAULT_PORT,
+        timeout=Bridge.DEFAULT_TIMEOUT,
         new_socket=False,
         convert_camel_case=True,
         debug=False,
@@ -70,7 +70,7 @@ class JavaObject(_JavaObjectShadow):
         debug:
             print debug messages
         """
-        bridge = _Bridge.create_or_get_existing_bridge(port=port, timeout=timeout, convert_camel_case=convert_camel_case, debug=debug)
+        bridge = Bridge.create_or_get_existing_bridge(port=port, timeout=timeout, convert_camel_case=convert_camel_case, debug=debug)
         return bridge._construct_java_object(classpath, new_socket=new_socket, args=args)
 
 
@@ -83,8 +83,8 @@ class JavaClass(_JavaObjectShadow):
     def __new__(
         cls,
         classpath,
-        port=_Bridge.DEFAULT_PORT,
-        timeout=_Bridge.DEFAULT_TIMEOUT,
+        port=Bridge.DEFAULT_PORT,
+        timeout=Bridge.DEFAULT_TIMEOUT,
         new_socket=False,
         convert_camel_case=True,
         debug=False,
@@ -104,5 +104,5 @@ class JavaClass(_JavaObjectShadow):
         debug:
             print debug messages
         """
-        bridge = _Bridge.create_or_get_existing_bridge(port=port, timeout=timeout, convert_camel_case=convert_camel_case, debug=debug)
+        bridge = Bridge.create_or_get_existing_bridge(port=port, timeout=timeout, convert_camel_case=convert_camel_case, debug=debug)
         return bridge._get_java_class(classpath, new_socket=new_socket)

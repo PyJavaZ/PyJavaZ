@@ -52,20 +52,6 @@ public abstract class ZMQSocketWrapper {
          port++;
       }
       portSocketMap_.put(port, t);
-      // Print everything
-      System.out.println("\n\nPrinting all ports");
-      for (int key : portSocketMap_.keySet()) {
-         System.out.println("Key: " + key + " Value: " + portSocketMap_.get(key));
-         ZMQSocketWrapper s = portSocketMap_.get(key);
-         if (s instanceof ZMQServer) {
-            if (((ZMQServer) s).externalObjects_ == null) {
-               continue;
-            }
-            for (Object o: ((ZMQServer) s).externalObjects_.values()) {
-               System.out.println("External object: " + o);
-            }
-         }
-      }
       return port;
    }
    
@@ -82,7 +68,6 @@ public abstract class ZMQSocketWrapper {
          }
          socket_.close();
          Object o = portSocketMap_.remove(this.getPort());
-         System.out.println("Remove object: " + o);
          closed_ = true;
       }
    }
