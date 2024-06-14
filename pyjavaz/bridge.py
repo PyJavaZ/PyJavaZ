@@ -223,6 +223,9 @@ class Bridge:
 
     Bridges are thread safe but the underlying ZMQ sockets are not, so a dedicated thread within
     the bridge is used to handle all communication with the server.
+
+    The constructor should not be called directly. Instead, use the static method create_or_get_existing_bridge.
+    This ensures that only one bridge is created for each port at a time, thereby avoiding concurrency issues
     """
 
     DEFAULT_PORT = 4827
@@ -243,7 +246,7 @@ class Bridge:
         iterate: bool = False,
     ):
         """
-        Get a bridge for a given port and thread. If a bridge for that port/thread combo already exists, return it
+        Get a bridge for a given port. If a bridge for that port already exists, return it
         """
         with Bridge._bridge_creation_lock:
 
@@ -295,6 +298,7 @@ class Bridge:
         self._close_lock = Lock()
         self._shutdown_event = threading.Event()
         self._class_factory = _JavaClassFactory()
+        self._communication_lock = threading.Lock()
 
         self._send_queue = Queue()
         self._response_queue = Queue()
@@ -392,17 +396,24 @@ class Bridge:
     def __del__(self):
         self.close()
 
-    def send(self, message):
+    def send_and_receive(self, message, timeout=None, give_up_condition=None):
         """
         Send a message over the main socket
         """
-        self._send_queue.put(message)
+        with self._communication_lock:
+            if give_up_condition:
+                # keep trying until give up condition is true
+                if timeout is None:
+                    timeout = 0.1
+                self._send_queue.put(message)
+                while not give_up_condition():
+                    try:
+                        return self._response_queue.get(timeout=timeout)
+                    except Empty:
+                        pass
 
-    def receive(self, timeout=None):
-        """
-        Send a message over the main socket
-        """
-        return self._response_queue.get(timeout=timeout)
+            self._send_queue.put(message)
+            return self._response_queue.get(timeout=timeout)
 
     def _deserialize_object(self, serialized_object) -> typing.Type["_JavaObjectShadow"]:
         """
@@ -443,8 +454,8 @@ class Bridge:
         # classpath_minus_class = '.'.join(classpath.split('.')[:-1])
         # query the server for constructors matching this classpath
         message = {"command": "get-constructors", "classpath": classpath}
-        self.send(message)
-        constructors = self.receive()["api"]
+        reply = self.send_and_receive(message)
+        constructors = reply["api"]
 
         methods_with_name = [m for m in constructors if m["name"] == classpath]
         if len(methods_with_name) == 0:
@@ -465,8 +476,7 @@ class Bridge:
         }
         if new_socket:
             message["new-port"] = True
-        self.send(message)
-        serialized_object = self.receive()
+        serialized_object = self.send_and_receive(message)
         if new_socket:
             # create a new bridge over a different port
             bridge = Bridge.create_or_get_existing_bridge(
@@ -507,8 +517,8 @@ class Bridge:
         message = {"command": "get-class", "classpath": classpath}
         if new_socket:
             message["new-port"] = True
-        self.send(message)
-        serialized_object = self.receive()
+
+        serialized_object = self.send_and_receive(message)
 
         if new_socket:
             # create a new bridge over a different port
@@ -661,12 +671,8 @@ class _JavaObjectShadow:
                 "hash-code": self._hash_code,
                 "java_class_name": self._java_class,  # for debugging
             }
-            self._send(message)
-            reply_json = None
-            while reply_json is None:
-                reply_json = self._bridge.receive(timeout=self._timeout)
-                if self._creation_port in Bridge._ports_with_terminated_servers:
-                    break  # the server has been terminated, so we can't expect a reply
+            reply_json = self._send_and_receive(message, give_up_condition=
+                            lambda: self._creation_port in Bridge._ports_with_terminated_servers)
             if reply_json is not None and reply_json["type"] == "exception":
                 raise Exception(reply_json["value"])
             self._closed = True
@@ -675,17 +681,11 @@ class _JavaObjectShadow:
             self._bridge.java_object_removed(self)
             self._bridge = None
 
-    def _send(self, message):
+    def _send_and_receive(self, message, give_up_condition=None):
         """
-        Send message over the appropriate Bridge
+        Send message over the appropriate Bridge, and return the response
         """
-        return self._bridge.send(message)
-
-    def _receive(self):
-        """
-        Receive message over appropriate bridge
-        """
-        return self._bridge.receive()
+        return self._bridge.send_and_receive(message, give_up_condition=give_up_condition)
 
     def __del__(self):
         """
@@ -707,8 +707,8 @@ class _JavaObjectShadow:
         :return:
         """
         message = {"command": "get-field", "hash-code": self._hash_code, "name": name}
-        self._send(message)
-        return self._deserialize(self._receive())
+        reply = self._send_and_receive(message)
+        return self._deserialize(reply)
 
     def _set_field(self, name, value):
         """
@@ -721,8 +721,7 @@ class _JavaObjectShadow:
             "name": name,
             "value": _serialize_arg(value),
         }
-        self._send(message)
-        reply = self._deserialize(self._receive())
+        reply = self._send_and_receive(message)
 
     def _translate_call(self, method_specs, fn_args: tuple, static: bool):
         """
@@ -744,9 +743,8 @@ class _JavaObjectShadow:
                    "argument-types": valid_method_spec["arguments"],
                    "argument-deserialization-types": deserialize_types,
                    "arguments": _package_arguments(valid_method_spec, fn_args)}
-        self._send(message)
-        recieved = self._receive()
-        return self._deserialize(recieved)
+        reply = self._send_and_receive(message)
+        return self._deserialize(reply)
 
     def _deserialize(self, json_return):
         """
