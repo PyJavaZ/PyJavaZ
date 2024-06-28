@@ -352,24 +352,24 @@ class Bridge:
                     )
                 )
 
-            ### Run the socket ###
-            while not self._shutdown_event.is_set():
-                try:
-                    message = self._send_queue.get(timeout=.05)
-                    if message is None:
-                        continue
-                    # print(threading.current_thread(), "sending message: ", message)
-                    socket.send(message)
-                    response = socket.receive()
-                    # print(threading.current_thread(), "received response: ", response)
-                    self._response_queue.put(response)
-                except Empty:
-                    continue
-
-
-        finally:
-            ### Shutdown the socket ###
+        except Exception as e:
+            ### Error on setup, close the bridge ###
             self.close()
+            raise e
+
+        ### Run the socket ###
+        while not self._shutdown_event.is_set():
+            try:
+                message = self._send_queue.get(timeout=.05)
+                if message is None:
+                    continue
+                socket.send(message)
+                response = socket.receive()
+                self._response_queue.put(response)
+            except Empty:
+                continue
+
+
 
     def close(self):
         with self._close_lock:
@@ -393,7 +393,9 @@ class Bridge:
                     self._shutdown_event.set()
                     t = self._socket_thread_wr()
                     if t is not None:
-                        t.join()
+                        t.join(5)
+                        if t.is_alive():
+                            warnings.warn("Timeout waiting for bridge to shutdown")
             finally:
                 self._closed = True
 
@@ -412,7 +414,8 @@ class Bridge:
                 self._send_queue.put(message)
                 while not give_up_condition():
                     try:
-                        return self._response_queue.get(timeout=timeout)
+                        response = self._response_queue.get(timeout=timeout)
+                        return response
                     except Empty:
                         pass
 
@@ -420,13 +423,16 @@ class Bridge:
             response = None
             if timeout is not None:
                 return self._response_queue.get(timeout=timeout)
-            while response is None: # try forever
-                if self._closed:
-                    raise Exception("Bridge has been closed")
-                try:
-                    self._response_queue.get(timeout=1)
-                except Empty:
-                    continue
+            else:
+                while response is None: # try forever
+                    if self._closed:
+                        raise Exception("Bridge has been closed")
+                    try:
+                        response = self._response_queue.get(timeout=1)
+                        return response
+                    except Empty:
+                        continue
+
 
     def _deserialize_object(self, serialized_object) -> typing.Type["_JavaObjectShadow"]:
         """
@@ -685,7 +691,7 @@ class _JavaObjectShadow:
                 "java_class_name": self._java_class,  # for debugging
             }
             reply_json = self._send_and_receive(message, give_up_condition=
-                            lambda: self._creation_port in Bridge._ports_with_terminated_servers)
+                        lambda: self._creation_port in Bridge._ports_with_terminated_servers)
             if reply_json is not None and reply_json["type"] == "exception":
                 raise Exception(reply_json["value"])
             self._closed = True
