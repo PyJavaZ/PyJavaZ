@@ -326,30 +326,36 @@ class Bridge:
             self.close()
 
     def _run_socket_thread(self):
-        ### Sartup the socket ###
-        socket = _DataSocket(
-            zmq.Context.instance(),
-            self.port,
-            zmq.REQ,
-            debug=self._debug,
-            ip_address=self._ip_address,
-        )
-        socket.send({"command": "connect", "debug": self._debug})
-        reply_json = socket.receive(timeout=self._timeout)
-        if reply_json is None:
-            raise Exception(f"Socket timed out after {self._timeout} milliseconds")
-        if reply_json["type"] == "exception":
-            raise Exception(reply_json["message"])
-        if "version" not in reply_json:
-            reply_json["version"] = "2.0.0"  # before version was added
-        if reply_json["version"] != self._EXPECTED_ZMQ_SERVER_VERSION:
-            warnings.warn(
-                "Version mistmatch between Java ZMQ server and Python client. "
-                "\nJava ZMQ server version: {}\nPython client expected version: {}"
-                "\n To fix, update to BOTH Java and Python sides of bridge".format(
-                    reply_json["version"], self._EXPECTED_ZMQ_SERVER_VERSION
-                )
+        try:
+            ### Sartup the socket ###
+            socket = _DataSocket(
+                zmq.Context.instance(),
+                self.port,
+                zmq.REQ,
+                debug=self._debug,
+                ip_address=self._ip_address,
             )
+            socket.send({"command": "connect", "debug": self._debug})
+            reply_json = socket.receive(timeout=self._timeout)
+            if reply_json is None:
+                raise Exception(f"Socket timed out after {self._timeout} milliseconds")
+            if reply_json["type"] == "exception":
+                raise Exception(reply_json["message"])
+            if "version" not in reply_json:
+                reply_json["version"] = "2.0.0"  # before version was added
+            if reply_json["version"] != self._EXPECTED_ZMQ_SERVER_VERSION:
+                warnings.warn(
+                    "Version mistmatch between Java ZMQ server and Python client. "
+                    "\nJava ZMQ server version: {}\nPython client expected version: {}"
+                    "\n To fix, update to BOTH Java and Python sides of bridge".format(
+                        reply_json["version"], self._EXPECTED_ZMQ_SERVER_VERSION
+                    )
+                )
+
+        except Exception as e:
+            ### Error on setup, close the bridge ###
+            self.close()
+            raise e
 
         ### Run the socket ###
         while not self._shutdown_event.is_set():
@@ -357,41 +363,41 @@ class Bridge:
                 message = self._send_queue.get(timeout=.05)
                 if message is None:
                     continue
-                # print(threading.current_thread(), "sending message: ", message)
                 socket.send(message)
                 response = socket.receive()
-                # print(threading.current_thread(), "received response: ", response)
                 self._response_queue.put(response)
             except Empty:
                 continue
 
 
-        ### Shutdown the socket ###
-        socket.close()
 
     def close(self):
         with self._close_lock:
-            if self._closed:
-                return
-            # Bridge has gone out of scope and is being garbage collected. JavaObjectShadows created
-            # by it may also be ready for GC but there is no guarentee as to which goes first. So, we
-            # need to make sure that the JavaObjectShadows are closed before the bridge is closed and the
-            # socket is closed
-            for java_obj in self._java_objects:
-                java_obj._close()  # this should deregister the object from the bridge
+            try:
+                if self._closed:
+                    return
+                # Bridge has gone out of scope and is being garbage collected. JavaObjectShadows created
+                # by it may also be ready for GC but there is no guarentee as to which goes first. So, we
+                # need to make sure that the JavaObjectShadows are closed before the bridge is closed and the
+                # socket is closed
+                for java_obj in self._java_objects:
+                    java_obj._close()  # this should deregister the object from the bridge
 
-            if len(self._java_objects) > 0:
-                warnings.warn("Bridge being garbage collected with {} JavaObjectShadows still open".format(
-                    len(self._java_objects)))
+                if len(self._java_objects) > 0:
+                    warnings.warn("Bridge being garbage collected with {} JavaObjectShadows still open".format(
+                        len(self._java_objects)))
 
-            with Bridge._bridge_creation_lock:
-                if self._cached:  # Don't run this if there was an exception in the constructor that prevented caching
-                    del Bridge._cached_bridges_by_port[self.port]
-                self._shutdown_event.set()
-                t = self._socket_thread_wr()
-                if t is not None:
-                    t.join()
-            self._closed = True
+                with Bridge._bridge_creation_lock:
+                    if self._cached:  # Don't run this if there was an exception in the constructor that prevented caching
+                        del Bridge._cached_bridges_by_port[self.port]
+                    self._shutdown_event.set()
+                    t = self._socket_thread_wr()
+                    if t is not None:
+                        t.join(5)
+                        if t.is_alive():
+                            warnings.warn("Timeout waiting for bridge to shutdown")
+            finally:
+                self._closed = True
 
     def __del__(self):
         self.close()
@@ -408,12 +414,25 @@ class Bridge:
                 self._send_queue.put(message)
                 while not give_up_condition():
                     try:
-                        return self._response_queue.get(timeout=timeout)
+                        response = self._response_queue.get(timeout=timeout)
+                        return response
                     except Empty:
                         pass
 
             self._send_queue.put(message)
-            return self._response_queue.get(timeout=timeout)
+            response = None
+            if timeout is not None:
+                return self._response_queue.get(timeout=timeout)
+            else:
+                while response is None: # try forever
+                    if self._closed:
+                        raise Exception("Bridge has been closed")
+                    try:
+                        response = self._response_queue.get(timeout=1)
+                        return response
+                    except Empty:
+                        continue
+
 
     def _deserialize_object(self, serialized_object) -> typing.Type["_JavaObjectShadow"]:
         """
@@ -672,7 +691,7 @@ class _JavaObjectShadow:
                 "java_class_name": self._java_class,  # for debugging
             }
             reply_json = self._send_and_receive(message, give_up_condition=
-                            lambda: self._creation_port in Bridge._ports_with_terminated_servers)
+                        lambda: self._creation_port in Bridge._ports_with_terminated_servers)
             if reply_json is not None and reply_json["type"] == "exception":
                 raise Exception(reply_json["value"])
             self._closed = True
