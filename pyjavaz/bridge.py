@@ -368,6 +368,8 @@ class Bridge:
                 self._response_queue.put(response)
             except Empty:
                 continue
+            except Exception as e:
+                self._response_queue.put(e)
 
 
 
@@ -415,23 +417,31 @@ class Bridge:
                 while not give_up_condition():
                     try:
                         response = self._response_queue.get(timeout=timeout)
-                        return response
                     except Empty:
                         pass
+                    if isinstance(response, Exception):
+                        raise response
+                    return response
 
             self._send_queue.put(message)
             response = None
             if timeout is not None:
-                return self._response_queue.get(timeout=timeout)
+                response = self._response_queue.get(timeout=timeout)
+                if isinstance(response, Exception):
+                    raise response
+                return response
             else:
                 while response is None: # try forever
                     if self._closed:
                         raise Exception("Bridge has been closed")
                     try:
                         response = self._response_queue.get(timeout=1)
-                        return response
                     except Empty:
                         continue
+                    if isinstance(response, Exception):
+                        raise response
+                    return response
+
 
 
     def _deserialize_object(self, serialized_object) -> typing.Type["_JavaObjectShadow"]:
