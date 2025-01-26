@@ -418,7 +418,7 @@ class Bridge:
                     try:
                         response = self._response_queue.get(timeout=timeout)
                     except Empty:
-                        pass
+                        continue
                     if isinstance(response, Exception):
                         raise response
                     return response
