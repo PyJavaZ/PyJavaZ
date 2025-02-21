@@ -7,13 +7,11 @@ import re
 import sys
 import threading
 import time
-import traceback
 import typing
 import warnings
 import weakref
 from threading import Lock
 from queue import Queue, Empty
-import itertools
 
 import numpy as np
 import zmq
@@ -300,7 +298,6 @@ class Bridge:
         self._shutdown_event = threading.Event()
         self._class_factory = _JavaClassFactory()
         self._communication_lock = threading.Lock()
-        self._request_id_gen = itertools.count()
 
         self._send_queue = Queue()
         self._response_queue = Queue()
@@ -367,8 +364,6 @@ class Bridge:
                     continue
                 socket.send(message)
                 response = socket.receive()
-                if response is not None and "request_id" in message:
-                    response["request_id"] = message["request_id"]  # Attach the request ID
                 self._response_queue.put(response)
             except Empty:
                 continue
@@ -412,10 +407,13 @@ class Bridge:
         """
         Send a message over the main socket
         """
-        # Add a unique request id to the message
-        req_id = next(self._request_id_gen)
-        message["request_id"] = req_id
         with self._communication_lock:
+            # Flush any stale responses from previous interrupted calls.
+            while True:
+                try:
+                    self._response_queue.get_nowait()
+                except Empty:
+                    break
             if give_up_condition:
                 # keep trying until give up condition is true
                 if timeout is None:
@@ -425,9 +423,6 @@ class Bridge:
                     try:
                         response = self._response_queue.get(timeout=timeout)
                     except Empty:
-                        continue
-                    # If the response has a mismatched ID, discard it
-                    if response.get("request_id") != req_id:
                         continue
                     if isinstance(response, Exception):
                         raise response
