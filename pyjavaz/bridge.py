@@ -38,7 +38,6 @@ class _DataSocket:
         # Set the send timeout to -1, making it block indefinitely
         self._socket.setsockopt(zmq.SNDTIMEO, -1)
         self._debug = debug
-        self._request_id_gen = itertools.count()
         self._port = port
         if type == zmq.PUSH:
             if debug:
@@ -301,6 +300,7 @@ class Bridge:
         self._shutdown_event = threading.Event()
         self._class_factory = _JavaClassFactory()
         self._communication_lock = threading.Lock()
+        self._request_id_gen = itertools.count()
 
         self._send_queue = Queue()
         self._response_queue = Queue()
